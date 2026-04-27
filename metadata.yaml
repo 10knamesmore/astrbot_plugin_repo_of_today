@@ -1,0 +1,6 @@
+name: repo_of_today
+display_name: Repo Of Today
+desc: Push GitHub daily trending repositories on a configurable schedule.
+version: v1.0.0
+author: wanger
+repo: https://github.com/AstrBotDevs/AstrBot
