@@ -18,6 +18,7 @@ PLUGIN_NAME = "astrbot_plugin_repo_of_today"
 DEFAULT_PUSH_TIME = "09:00"
 DEFAULT_PUSH_COUNT = 5
 MAX_RESULTS_LIMIT = 10
+LLM_CONCURRENCY = 3
 TRENDING_BASE_URL = "https://github.com/trending"
 
 
@@ -60,7 +61,8 @@ class Main(Star):
 
     全部行为由 `_conf_schema.json` 配置驱动：
     1. `/repo_today` 手动拉取一次（无参数，使用当前配置）。
-    2. `enabled=true` 时按 `push_time` 给 `target_sessions` 中的每个会话注册定时推送。
+    2. `enabled=true` 时注册一个全局 cron 任务，在 `push_time` 时刻为所有 `target_sessions`
+       共享一次 GitHub Trending 抓取，再按各会话人格独立做 LLM 增强后广播。
     3. 插件重载/卸载时统一管理 cron 任务的注册与清理。
     """
 
@@ -78,19 +80,16 @@ class Main(Star):
         return cast(Context, self.context)
 
     async def initialize(self) -> None:
-        """插件加载时按配置注册定时任务。"""
+        """插件加载时按配置注册一个全局定时推送任务。"""
         if not bool(self.config.get("enabled", False)):
             return
+        if not self._target_sessions():
+            return
         async with self._job_lock:
-            for umo in self._target_sessions():
-                try:
-                    await self._schedule_for(umo)
-                except Exception:
-                    logger.exception(
-                        "[%s] failed to schedule cron job for %s",
-                        PLUGIN_NAME,
-                        umo,
-                    )
+            try:
+                await self._schedule_global_job()
+            except Exception:
+                logger.exception("[%s] failed to schedule global cron job", PLUGIN_NAME)
 
     async def terminate(self) -> None:
         """插件卸载时清理已注册任务，避免重复触发。"""
@@ -164,8 +163,8 @@ class Main(Star):
             push_count=push_count,
         )
 
-    async def _schedule_for(self, session_umo: str) -> None:
-        """为单个会话注册每日 cron 任务。"""
+    async def _schedule_global_job(self) -> None:
+        """注册一个全局每日 cron 任务，触发时统一向所有 target_sessions 广播。"""
         cron_manager = self.ctx.cron_manager
         if cron_manager is None:
             raise RuntimeError("cron manager is not available")
@@ -177,38 +176,100 @@ class Main(Star):
         hour, minute = self._parse_time_to_hm(push_time)
         cron_expression = f"{minute} {hour} * * *"
         cron_job = await cron_manager.add_basic_job(
-            name=f"{PLUGIN_NAME}:{session_umo}",
+            name=PLUGIN_NAME,
             cron_expression=cron_expression,
-            handler=self._cron_push_handler,
-            payload={"session_umo": session_umo},
-            description="Daily repo of today push",
+            handler=self._cron_broadcast_handler,
+            description="Daily repo of today broadcast",
             enabled=True,
             persistent=False,
         )
         self._job_ids.append(cron_job.job_id)
 
-    async def _cron_push_handler(self, session_umo: str) -> None:
-        """Cron 回调：按当前配置生成并主动发送推送消息。"""
+    async def _cron_broadcast_handler(self) -> None:
+        """Cron 回调：每语言抓取一次 trending，再循环 target_sessions 做 persona+LLM 增强并发送。"""
         if not bool(self.config.get("enabled", False)):
             return
-        runtime_config = self._build_runtime_config(session_umo)
-        try:
-            messages = await self._build_push_messages(runtime_config)
-        except Exception:
-            logger.exception(
-                "[%s] failed to build push messages for %s", PLUGIN_NAME, session_umo
-            )
+        sessions = self._target_sessions()
+        if not sessions:
             return
-        for message in messages:
+
+        base_config = self._build_runtime_config(sessions[0])
+        languages = base_config.languages or []
+        max_results = base_config.push_count
+        fetch_keys = languages if languages else [""]
+
+        fetched: dict[str, list[RepoItem] | Exception] = {}
+        for key in fetch_keys:
             try:
-                await self.ctx.send_message(
-                    session_umo, MessageChain().message(message)
+                fetched[key] = await self._fetch_trending_repos(
+                    self._build_trending_url(key), max_results
+                )
+            except Exception as exc:
+                logger.exception(
+                    "[%s] failed to fetch trending for %s",
+                    PLUGIN_NAME,
+                    key or "all",
+                )
+                fetched[key] = exc
+
+        for umo in sessions:
+            try:
+                session_config = self._build_runtime_config(umo)
+                messages = await self._build_messages_with_cached_repos(
+                    session_config, fetched
                 )
             except Exception:
                 logger.exception(
-                    "[%s] failed to send message to %s", PLUGIN_NAME, session_umo
+                    "[%s] failed to build messages for %s", PLUGIN_NAME, umo
                 )
-        await self._maybe_append_history(session_umo, messages)
+                continue
+            for message in messages:
+                try:
+                    await self.ctx.send_message(umo, MessageChain().message(message))
+                except Exception:
+                    logger.exception(
+                        "[%s] failed to send message to %s", PLUGIN_NAME, umo
+                    )
+            await self._maybe_append_history(umo, messages)
+
+    async def _build_messages_with_cached_repos(
+        self,
+        config: PushConfig,
+        fetched: dict[str, list[RepoItem] | Exception],
+    ) -> list[str]:
+        """复用已抓取的 trending 数据，仅做 persona + LLM 增强后组装消息。"""
+        languages = config.languages or []
+        max_results = max(1, min(config.push_count, MAX_RESULTS_LIMIT))
+        opening_line = await self._generate_persona_opening_line(
+            session_umo=config.session_umo,
+        )
+        messages: list[str] = []
+        if opening_line:
+            messages.append(f"🗣️ {opening_line}")
+
+        if not languages:
+            data = fetched.get("")
+            if isinstance(data, Exception):
+                messages.append(f"## all languages\nFailed to fetch: {data}")
+                return messages
+            repos = list(data or [])[:max_results]
+            repos = await self._enhance_repos_with_ai(
+                repos=repos, session_umo=config.session_umo
+            )
+            messages.append(self._format_repos_message("all languages", repos))
+            return messages
+
+        for lang in languages:
+            data = fetched.get(lang)
+            if isinstance(data, Exception):
+                messages.append(f"## {lang}\nFailed to fetch: {data}")
+                continue
+            repos = list(data or [])[:max_results]
+            repos = await self._enhance_repos_with_ai(
+                repos=repos, session_umo=config.session_umo
+            )
+            messages.append(self._format_repos_message(lang, repos))
+        return messages
 
     async def _build_push_messages(self, config: PushConfig) -> list[str]:
         """根据配置构建最终推送消息列表。
@@ -286,14 +347,17 @@ class Main(Star):
             return repos
 
         persona_prompt = await self._resolve_active_persona_prompt(session_umo)
-        tasks = [
-            self._generate_ai_description(
-                repo=repo,
-                session_umo=session_umo,
-                persona_prompt=persona_prompt,
-            )
-            for repo in repos
-        ]
+        sem = asyncio.Semaphore(LLM_CONCURRENCY)
+
+        async def _bounded_generate(repo: RepoItem) -> str:
+            async with sem:
+                return await self._generate_ai_description(
+                    repo=repo,
+                    session_umo=session_umo,
+                    persona_prompt=persona_prompt,
+                )
+
+        tasks = [_bounded_generate(repo) for repo in repos]
         ai_desc_list = await asyncio.gather(*tasks, return_exceptions=True)
 
         enhanced: list[RepoItem] = []
@@ -534,7 +598,7 @@ class Main(Star):
             async with session.get(url) as response:
                 response.raise_for_status()
                 html = await response.text()
-        return self._parse_trending_html(html, max_results)
+        return await asyncio.to_thread(self._parse_trending_html, html, max_results)
 
     def _parse_trending_html(self, html: str, max_results: int) -> list[RepoItem]:
         """从 Trending HTML 中提取仓库信息。"""
