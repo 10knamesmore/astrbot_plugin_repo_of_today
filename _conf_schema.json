@@ -23,10 +23,10 @@
     "hint": "建议范围 1-10"
   },
   "languages": {
-    "description": "关注的语言；不选则推送全语言榜",
+    "description": "关注的语言；留空则推送综合榜",
     "type": "list",
     "default": [],
-    "hint": "在下拉中多选；为空时推送全语言 trending",
+    "hint": "下拉多选。留空 → 推送综合榜的 push_count 条（1 条消息）；填入 1 种 → 该语言的 push_count 条（1 条消息）；填入 N 种 → 每种语言各 push_count 条（N 条消息）；只要填入任意语言就不再推送综合榜",
     "options": [
       "1centerprise",
       "4d",
