@@ -1,7 +1,7 @@
 name: astrbot_plugin_repo_of_today
 display_name: Repo Of Today
-desc: Push GitHub daily trending repositories on a configurable schedule.
-version: v0.1.2
+desc: 定时推送 GitHub 每日热门仓库，并对手动指定的追踪仓库生成提交总结。
+version: v0.2.0
 author: wanger
 repo: https://github.com/10knamesmore/astrbot_plugin_repo_of_today
 support_platforms:

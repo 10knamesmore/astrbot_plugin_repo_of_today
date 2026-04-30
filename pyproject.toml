@@ -1,3 +1,28 @@
+[project]
+name = "astrbot_plugin_repo_of_today"
+version = "0.2.0"
+description = "AstrBot plugin: push GitHub trending and manually tracked repos' commit summaries."
+requires-python = ">=3.10"
+dependencies = [
+  "aiohttp>=3.9",
+  "beautifulsoup4>=4.12",
+]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.14",
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+]
+scripts = [
+  "pyyaml",
+  "requests",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
 [tool.ruff]
 line-length = 88
 target-version = "py310"

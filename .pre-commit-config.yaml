@@ -1,4 +1,4 @@
-default_install_hook_types: [pre-commit, prepare-commit-msg]
+default_install_hook_types: [pre-commit, prepare-commit-msg, pre-push]
 ci:
   autofix_commit_msg: ":balloon: auto fixes by pre-commit hooks"
   autofix_prs: true
@@ -20,3 +20,13 @@ repos:
     hooks:
       - id: pyupgrade
         args: [--py310-plus]
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest (offline regression tests)
+        entry: uv run --group dev pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        types: [python]
