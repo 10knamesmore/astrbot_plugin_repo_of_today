@@ -13,21 +13,21 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 
-from src import PLUGIN_NAME
-from src.config import (
+from .src import PLUGIN_NAME
+from .src.config import (
     append_history_enabled,
     parse_time_to_hm,
     push_enabled,
     target_sessions,
 )
-from src.history import append_history
-from src.pipeline import (
+from .src.history import append_history
+from .src.pipeline import (
     run_repo_today_once,
     run_repo_track_once,
     run_track,
     run_trending,
 )
-from src.typing_heartbeat import typing_indicator
+from .src.typing_heartbeat import typing_indicator
 
 
 class Main(Star):

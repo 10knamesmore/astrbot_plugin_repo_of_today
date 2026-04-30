@@ -40,6 +40,8 @@ uv run --group scripts python scripts/update_languages.py
 
 **不允许**在 `main.py` 出现：HTTP 抓取、HTML/JSON 解析、LLM 调用、文本拼装、配置归一化、状态文件 IO。这些都属于 `src/` 包，每个 handler 体内基本是 `await pipeline.run_xxx(...)` + `event.plain_result(...)`。
 
+**导入风格强约束：`main.py` 必须用相对导入**（`from .src.xxx import ...`）。AstrBot 把插件目录整个当作一个包加载（`data.plugins.astrbot_plugin_repo_of_today`），`from src import ...` 形式的绝对导入会因为找不到顶层 `src` 模块而启动失败。`src/` 内部模块互相之间也已经全部使用相对导入。
+
 ## src/ 业务包结构
 
 `src/` 是这个插件的真实逻辑所在。模块按职责划分：
