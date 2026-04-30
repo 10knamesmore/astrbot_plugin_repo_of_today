@@ -3,6 +3,8 @@ name = "astrbot_plugin_repo_of_today"
 version = "0.2.1"
 description = "AstrBot plugin: push GitHub trending and manually tracked repos' commit summaries."
 requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = [
   "aiohttp>=3.9",
   "beautifulsoup4>=4.12",
