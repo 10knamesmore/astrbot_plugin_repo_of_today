@@ -8,14 +8,14 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.star import Context
 
 from . import MAX_RESULTS_LIMIT, PLUGIN_NAME, TRACK_WINDOW_HOURS
-from .config import build_runtime_config, tracked_repos
+from .config import build_runtime_config, track_show_count, tracked_repos
 from .formatting import format_repo_update_message, format_trending_message
 from .github import commits as commits_api
 from .github.trending import fetch_trending
 from .llm import (
     enhance_repos_with_ai,
     generate_persona_opening_line,
-    summarize_commits_per_session,
+    process_updates_per_session,
 )
 from .models import PushConfig, RepoItem, RepoUpdate
 
@@ -82,7 +82,9 @@ async def run_repo_track_once(
         return []
     since_iso = _since_iso()
     fetched = await commits_api.fetch_all(repos, since_iso)
-    return await _build_track_messages(ctx, session_umo, fetched)
+    return await _build_track_messages(
+        ctx, session_umo, fetched, track_show_count(config)
+    )
 
 
 async def run_track(
@@ -99,11 +101,12 @@ async def run_track(
 
     since_iso = _since_iso()
     fetched = await commits_api.fetch_all(repos, since_iso)
+    show_count = track_show_count(config)
 
     out: dict[str, list[str]] = {}
     for umo in sessions:
         try:
-            messages = await _build_track_messages(ctx, umo, fetched)
+            messages = await _build_track_messages(ctx, umo, fetched, show_count)
         except Exception:
             logger.exception(
                 "[%s] failed to build track messages for %s", PLUGIN_NAME, umo
@@ -184,18 +187,25 @@ async def _build_track_messages(
     ctx: Context,
     session_umo: str,
     fetched: dict[str, RepoUpdate],
+    show_count: int,
 ) -> list[str]:
     """对每个仓库的 RepoUpdate 做 LLM 总结并组装为消息列表（无更新仓库会被跳过）。"""
     interesting = [u for u in fetched.values() if u.commits or u.error]
     has_commits = [u for u in interesting if u.commits]
     if not has_commits:
         return []
-    summaries = await summarize_commits_per_session(ctx, session_umo, has_commits)
-    summary_map = {update.full_name: text for update, text in summaries}
+    processed = await process_updates_per_session(
+        ctx, session_umo, has_commits, show_count
+    )
+    info_map = {
+        update.full_name: (overview, explanations)
+        for update, overview, explanations in processed
+    }
 
     messages: list[str] = []
     for update in interesting:
-        text = format_repo_update_message(update, summary_map.get(update.full_name, ""))
+        overview, explanations = info_map.get(update.full_name, ("", []))
+        text = format_repo_update_message(update, overview, explanations, show_count)
         if text:
             messages.append(text)
     return messages

@@ -10,7 +10,9 @@ from astrbot.api import logger
 from astrbot.api.star import Context
 
 from . import LLM_CONCURRENCY, PLUGIN_NAME
-from .models import RepoItem, RepoUpdate
+from .models import RepoCommit, RepoItem, RepoUpdate
+
+_NUMBERED_LINE_RE = re.compile(r"^\s*(\d+)[.、)]\s*(.+?)\s*$")
 
 
 async def resolve_active_persona_prompt(ctx: Context, session_umo: str) -> str:
@@ -199,34 +201,124 @@ async def summarize_commits(
     return f"共 {len(update.commits)} 条提交：{preview}"
 
 
-async def summarize_commits_per_session(
+async def explain_commits(
+    ctx: Context,
+    session_umo: str,
+    commits: list[RepoCommit],
+    full_name: str,
+    persona_prompt: str,
+) -> list[str]:
+    """让 LLM 为每条 commit 输出一句中文说明。返回值与 commits 等长。
+
+    解析失败的位置回落为对应 commit 的原 message。
+    """
+    if not commits:
+        return []
+    fallback = [c.message for c in commits]
+    try:
+        provider_id = await ctx.get_current_chat_provider_id(umo=session_umo)
+        commit_lines = "\n".join(
+            f"{idx}. [{c.short_sha}] {c.message} —— {c.author}"
+            for idx, c in enumerate(commits, 1)
+        )
+        prompt = (
+            f"以下是 GitHub 仓库 {full_name} 过去 24 小时最新的 {len(commits)} 条 commit。\n"
+            "请为每条 commit 用一句中文（不超过 30 字）说明它做了什么，"
+            '重在传达"对用户/开发者的影响"，不要复述 commit 标题，不要使用 markdown。\n'
+            "严格按以下格式逐条输出，每条仅一行，不要任何前后缀文字：\n"
+            "1. <说明>\n"
+            "2. <说明>\n"
+            "...\n\n"
+            "输入：\n"
+            f"{commit_lines}"
+        )
+        llm_resp = await ctx.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt=persona_prompt or None,
+            temperature=0.3,
+            max_tokens=max(200, 60 * len(commits)),
+        )
+        text = (llm_resp.completion_text or "").strip()
+        if not text:
+            return fallback
+    except Exception as exc:
+        logger.warning(
+            "[%s] explain_commits failed for %s: %s", PLUGIN_NAME, full_name, exc
+        )
+        return fallback
+
+    parsed: list[str | None] = [None] * len(commits)
+    for raw_line in text.splitlines():
+        m = _NUMBERED_LINE_RE.match(raw_line)
+        if not m:
+            continue
+        idx = int(m.group(1)) - 1
+        if 0 <= idx < len(parsed) and parsed[idx] is None:
+            parsed[idx] = re.sub(r"\s+", " ", m.group(2))
+    return [parsed[i] or fallback[i] for i in range(len(commits))]
+
+
+async def process_updates_per_session(
     ctx: Context,
     session_umo: str,
     updates: list[RepoUpdate],
-) -> list[tuple[RepoUpdate, str]]:
-    """按会话统一解析人格，并发为每个仓库生成总结。"""
+    show_count: int,
+) -> list[tuple[RepoUpdate, str, list[str]]]:
+    """按会话统一解析人格，并发为每个 update 生成 (overview, per_commit_explanations)。
+
+    explanations 长度 = min(len(update.commits), show_count)；只对将要展示的前 N 条调
+    `explain_commits`，避免为不展示的尾部 commit 浪费 token。
+    """
     if not updates:
         return []
     persona_prompt = await resolve_active_persona_prompt(ctx, session_umo)
     sem = asyncio.Semaphore(LLM_CONCURRENCY)
 
-    async def _bounded(update: RepoUpdate) -> str:
+    async def _bounded_overview(update: RepoUpdate) -> str:
         async with sem:
             return await summarize_commits(ctx, session_umo, update, persona_prompt)
 
-    summaries = await asyncio.gather(
-        *[_bounded(u) for u in updates], return_exceptions=True
+    async def _bounded_explanations(update: RepoUpdate) -> list[str]:
+        head = update.commits[:show_count]
+        async with sem:
+            return await explain_commits(
+                ctx, session_umo, head, update.full_name, persona_prompt
+            )
+
+    overview_task = asyncio.gather(
+        *[_bounded_overview(u) for u in updates], return_exceptions=True
     )
-    out: list[tuple[RepoUpdate, str]] = []
-    for update, summary in zip(updates, summaries, strict=False):
-        if isinstance(summary, BaseException):
+    explanations_task = asyncio.gather(
+        *[_bounded_explanations(u) for u in updates], return_exceptions=True
+    )
+    overviews, explanations_lists = await asyncio.gather(
+        overview_task, explanations_task
+    )
+
+    out: list[tuple[RepoUpdate, str, list[str]]] = []
+    for update, overview, explanations in zip(
+        updates, overviews, explanations_lists, strict=False
+    ):
+        if isinstance(overview, BaseException):
             logger.warning(
                 "[%s] summarize_commits crashed for %s: %s",
                 PLUGIN_NAME,
                 update.full_name,
-                summary,
+                overview,
             )
-            out.append((update, ""))
-            continue
-        out.append((update, cast(str, summary)))
+            overview_text = ""
+        else:
+            overview_text = cast(str, overview)
+        if isinstance(explanations, BaseException):
+            logger.warning(
+                "[%s] explain_commits crashed for %s: %s",
+                PLUGIN_NAME,
+                update.full_name,
+                explanations,
+            )
+            explanations_list = [c.message for c in update.commits[:show_count]]
+        else:
+            explanations_list = cast(list[str], explanations)
+        out.append((update, overview_text, explanations_list))
     return out

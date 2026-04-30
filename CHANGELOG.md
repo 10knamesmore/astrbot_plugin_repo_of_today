@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.0 — 2026-05-01
+
+### Changed
+- 追踪仓库消息格式重写：从「whole-repo 总览 + 3 条 markdown 链接的原始 commit message」改为「whole-repo 总览 + 每条 commit 的 LLM 中文说明 + 裸 commit URL」。Markdown 链接（`[]()`）被去除，Telegram 等 IM 直接拿到可点的裸 URL，不再有 `[](http...)` 字符串。
+- 每条说明走一次批量 LLM 调用（编号列表解析），失败位置回落为对应 commit 的原 message。
+- 头部从 `## 📦 owner/repo 仓库更新` 改为单行 `📦 owner/repo · 过去 24h · N 条`。
+
+### Added
+- 新增配置项 `track_show_count`（默认 5，clamp `[1, 50]`）：控制单条消息内展示多少条 commit 说明。超出部分汇总为 `_另有 N 条更新…_` + commits 页 URL。
+
 ## v0.2.1 — 2026-05-01
 
 ### Fixed

@@ -580,5 +580,11 @@
     "type": "list",
     "default": [],
     "hint": "每行一个 GitHub 仓库主页 URL，例如 https://github.com/AstrBotDevs/AstrBot；尾部斜杠 / .git / /tree/branch 都会被忽略。留空则禁用追踪推送。也可在会话内发送 /repo_track 立即拉取"
+  },
+  "track_show_count": {
+    "description": "每条追踪仓库消息内展示的 commit 数量",
+    "type": "int",
+    "default": 5,
+    "hint": "范围 1-50；超出部分汇总为「另有 N 条更新」+ commits 页链接"
   }
 }

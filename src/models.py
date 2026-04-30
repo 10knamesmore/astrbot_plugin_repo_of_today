@@ -29,6 +29,7 @@ class PushConfig:
     languages: list[str] | None = None
     push_count: int = DEFAULT_PUSH_COUNT
     tracked_repos: list[tuple[str, str]] = field(default_factory=list)
+    track_show_count: int = 5
 
 
 @dataclass(slots=True)

@@ -6,7 +6,15 @@ import re
 
 from astrbot.api import AstrBotConfig, logger
 
-from . import DEFAULT_PUSH_COUNT, DEFAULT_PUSH_TIME, MAX_RESULTS_LIMIT, PLUGIN_NAME
+from . import (
+    DEFAULT_PUSH_COUNT,
+    DEFAULT_PUSH_TIME,
+    MAX_RESULTS_LIMIT,
+    PLUGIN_NAME,
+    TRACK_DEFAULT_SHOW_COUNT,
+    TRACK_SHOW_COUNT_MAX,
+    TRACK_SHOW_COUNT_MIN,
+)
 from .models import PushConfig
 
 _TIME_RE = re.compile(r"\s*([01]?\d|2[0-3]):([0-5]\d)\s*")
@@ -82,6 +90,16 @@ def tracked_repos(config: AstrBotConfig) -> list[tuple[str, str]]:
     return out
 
 
+def track_show_count(config: AstrBotConfig) -> int:
+    """读取并夹紧 track_show_count 到 [TRACK_SHOW_COUNT_MIN, TRACK_SHOW_COUNT_MAX]。"""
+    raw = config.get("track_show_count", TRACK_DEFAULT_SHOW_COUNT)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return TRACK_DEFAULT_SHOW_COUNT
+    return max(TRACK_SHOW_COUNT_MIN, min(value, TRACK_SHOW_COUNT_MAX))
+
+
 def build_runtime_config(config: AstrBotConfig, session_umo: str) -> PushConfig:
     """根据当前配置和 UMO 组装单次运行的 PushConfig。"""
     push_time = (
@@ -112,6 +130,7 @@ def build_runtime_config(config: AstrBotConfig, session_umo: str) -> PushConfig:
         languages=languages,
         push_count=push_count,
         tracked_repos=tracked_repos(config),
+        track_show_count=track_show_count(config),
     )
 
 

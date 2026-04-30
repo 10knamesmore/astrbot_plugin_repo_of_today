@@ -6,6 +6,7 @@ from src.config import (
     normalize_time,
     parse_time_to_hm,
     target_sessions,
+    track_show_count,
     tracked_repos,
 )
 
@@ -153,3 +154,26 @@ class TestBuildRuntimeConfig:
             "umo",
         )
         assert rc.tracked_repos == [("a", "b")]
+
+    def test_track_show_count_propagated(self):
+        rc = build_runtime_config({"track_show_count": 7}, "umo")
+        assert rc.track_show_count == 7
+
+
+class TestTrackShowCount:
+    def test_default(self):
+        assert track_show_count({}) == 5
+
+    def test_clamps_high(self):
+        assert track_show_count({"track_show_count": 999}) == 50
+
+    def test_clamps_low(self):
+        assert track_show_count({"track_show_count": 0}) == 1
+        assert track_show_count({"track_show_count": -10}) == 1
+
+    def test_invalid_falls_back(self):
+        assert track_show_count({"track_show_count": "abc"}) == 5
+        assert track_show_count({"track_show_count": None}) == 5
+
+    def test_int_string_accepted(self):
+        assert track_show_count({"track_show_count": "7"}) == 7
