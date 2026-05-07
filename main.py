@@ -116,6 +116,29 @@ class Main(Star):
         if cron_manager is None:
             raise RuntimeError("cron manager is not available")
 
+        # add_basic_job(persistent=False) 仍写一行 DB 且无自动清理路径；
+        # 上次 terminate 没正常跑（崩溃 / kill -9 / 旧版本）会留 orphan 行——
+        # 触发时找不到 handler 反复抛 RuntimeError。先按 name 清干净再新建。
+        try:
+            existing = await cron_manager.list_jobs("basic")
+        except Exception:
+            logger.exception("[%s] failed to list cron jobs", PLUGIN_NAME)
+            existing = []
+        for job in existing:
+            if getattr(job, "name", None) != PLUGIN_NAME:
+                continue
+            try:
+                await cron_manager.delete_job(job.job_id)
+                logger.info(
+                    "[%s] cleaned stale cron job: %s", PLUGIN_NAME, job.job_id
+                )
+            except Exception:
+                logger.warning(
+                    "[%s] failed to delete stale cron job %s",
+                    PLUGIN_NAME,
+                    job.job_id,
+                )
+
         push_time = self.config.get("push_time", "09:00")
         try:
             hour, minute = parse_time_to_hm(str(push_time))

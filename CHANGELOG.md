@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.1 — 2026-05-08
+
+### Fixed
+- `initialize()` 注册 cron 之前先按 `name` 清理 DB 里的同名残留行。`add_basic_job(persistent=False)` 仍会写一行，且 AstrBot 框架在重启 / 崩溃 / kill -9 时不会自动清掉 `persistent=False` 行——之前 terminate 没正常跑就会留 orphan：触发时找不到 handler 反复抛 RuntimeError，行还会按 cron 一直在 WebUI "future task" 列表里堆积。terminate 那边的清理逻辑保持不变。
+
+---
+
 ## v0.3.0 — 2026-05-01
 
 ### Changed
